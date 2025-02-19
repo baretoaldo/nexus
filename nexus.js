@@ -27,11 +27,12 @@ async function signAndAuthenticate(wallet) {
         const nonceResponse = await axios.get(`${API_BASE_URL}/nonce`);
         console.log("🔍 Response dari /nonce:", nonceResponse.data);
         
-        if (!nonceResponse.data || !nonceResponse.data.messageToSign) {
+        if (!nonceResponse.data || !nonceResponse.data.nonce) {
             throw new Error("Response dari /nonce tidak valid.");
         }
 
-        const messageToSign = nonceResponse.data.messageToSign;
+        const nonce = nonceResponse.data.nonce;
+        const messageToSign = `app.nexus.xyz wants you to sign in with your Ethereum account:\n${wallet.address}\n\nNonce: ${nonce}`;
         console.log("📜 Pesan untuk ditandatangani:", messageToSign);
 
         // Menandatangani pesan

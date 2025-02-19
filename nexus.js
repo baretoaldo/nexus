@@ -71,8 +71,8 @@ async function connectWallet(privateKey, web3) {
     const nonce = await getNonce();
     if (!nonce) return;
 
-    console.log('Menunggu 1 menit sebelum lanjut...');
-    await delay(60000); // Jeda 1 menit
+    console.log('Menunggu 3 detik sebelum lanjut...');
+    await delay(3000); // Jeda 3 detik
 }
 
 async function main() {

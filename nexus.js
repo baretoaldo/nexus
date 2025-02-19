@@ -10,6 +10,10 @@ const API_BASE_URL = "https://app.dynamicauth.com/api/v0/sdk/adc09cea-6194-4667-
 // Membaca private keys dari data.txt
 const privateKeys = fs.readFileSync("data.txt", "utf-8").trim().split("\n");
 
+async function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function connectWallet(privateKey) {
     try {
         const provider = new ethers.JsonRpcProvider(RPC_URL);
@@ -23,7 +27,7 @@ async function connectWallet(privateKey) {
 
 async function signAndAuthenticate(wallet) {
     try {
-        // Mendapatkan nonce untuk autentikasi
+        await delay(2000);
         const nonceResponse = await axios.get(`${API_BASE_URL}/nonce`);
         console.log("🔍 Response dari /nonce:", nonceResponse.data);
         
@@ -35,11 +39,11 @@ async function signAndAuthenticate(wallet) {
         const messageToSign = `app.nexus.xyz wants you to sign in with your Ethereum account:\n${wallet.address}\n\nNonce: ${nonce}`;
         console.log("📜 Pesan untuk ditandatangani:", messageToSign);
 
-        // Menandatangani pesan
+        await delay(2000);
         const signedMessage = await wallet.signMessage(messageToSign);
         console.log("✍️ Tanda tangan berhasil:", signedMessage);
 
-        // Verifikasi autentikasi
+        await delay(2000);
         const verifyResponse = await axios.post(`${API_BASE_URL}/verify`, {
             signedMessage,
             messageToSign,
@@ -64,7 +68,7 @@ async function signAndAuthenticate(wallet) {
 
 async function fetchBlockchainData(jwt) {
     try {
-        // Mendapatkan nomor blok terbaru
+        await delay(2000);
         const blockNumberResponse = await axios.post(`${RPC_URL}`, {
             jsonrpc: "2.0",
             method: "eth_blockNumber",
@@ -74,7 +78,7 @@ async function fetchBlockchainData(jwt) {
         const blockNumber = blockNumberResponse.data.result;
         console.log("🔢 Nomor blok terbaru:", blockNumber);
 
-        // Mengambil detail blok berdasarkan nomor
+        await delay(2000);
         const blockDetailsResponse = await axios.post(`${RPC_URL}`, {
             jsonrpc: "2.0",
             method: "eth_getBlockByNumber",
@@ -96,7 +100,7 @@ async function main() {
         const jwt = await signAndAuthenticate(wallet);
         if (!jwt) continue;
 
-        // Memilih wallet yang digunakan
+        await delay(2000);
         await axios.put(`${API_BASE_URL}/users/wallets/selection`, {
             walletId: wallet.address
         }, {
@@ -104,13 +108,12 @@ async function main() {
         });
         console.log("✅ Wallet berhasil dipilih.");
 
-        // Menggunakan JWT untuk mengupdate user data
+        await delay(2000);
         await axios.put(`${API_BASE_URL}/users`, { email: "", metadata: { "Get Updates": "" } }, {
             headers: { Authorization: `Bearer ${jwt}` },
         });
         console.log("🔄 Data pengguna diperbarui.");
 
-        // Mengambil data blockchain dari Nexus
         await fetchBlockchainData(jwt);
     }
 }

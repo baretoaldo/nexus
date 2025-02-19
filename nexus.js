@@ -8,6 +8,8 @@ const rl = readline.createInterface({
     output: process.stdout
 });
 
+const responseLogFile = "respon.txt";
+
 // Konfigurasi jaringan Nexus
 const RPC_URL = "https://rpc.nexus.xyz/http";
 const CHAIN_ID = 392;
@@ -15,6 +17,11 @@ const API_BASE_URL = "https://app.dynamicauth.com/api/v0/sdk/adc09cea-6194-4667-
 
 // Membaca private keys dari data.txt
 const privateKeys = fs.readFileSync("data.txt", "utf-8").trim().split("\n");
+
+async function logResponse(endpoint, data) {
+    const logEntry = `Endpoint: ${endpoint}\nResponse: ${JSON.stringify(data, null, 2)}\n\n`;
+    fs.appendFileSync(responseLogFile, logEntry);
+}
 
 async function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -40,6 +47,7 @@ async function signAndAuthenticate(wallet) {
     try {
         const nonceResponse = await axios.get(`${API_BASE_URL}/nonce`);
         console.log("🔍 Response dari /nonce:", nonceResponse.data);
+        await logResponse("/nonce", nonceResponse.data);
         await waitForEnter();
         
         if (!nonceResponse.data || !nonceResponse.data.nonce) {
@@ -64,6 +72,7 @@ async function signAndAuthenticate(wallet) {
             walletProvider: "browserExtension",
             network: CHAIN_ID.toString(),
         });
+        await logResponse("/verify", verifyResponse.data);
         await waitForEnter();
         
         if (!verifyResponse.data || !verifyResponse.data.jwt) {
@@ -87,19 +96,21 @@ async function processWallet(pk, index) {
     if (!jwt) return;
 
     console.log(`🔄 [Wallet ${index + 1}] Memilih wallet...`);
-    await axios.put(`${API_BASE_URL}/users/wallets/selection`, {
+    const selectionResponse = await axios.put(`${API_BASE_URL}/users/wallets/selection`, {
         walletId: wallet.address
     }, {
         headers: { Authorization: `Bearer ${jwt}` },
     });
     console.log(`✅ [Wallet ${index + 1}] Wallet berhasil dipilih.`);
+    await logResponse("/users/wallets/selection", selectionResponse.data);
     await waitForEnter();
 
     console.log(`🔄 [Wallet ${index + 1}] Memperbarui data pengguna...`);
-    await axios.put(`${API_BASE_URL}/users`, { email: "", metadata: { "Get Updates": "" } }, {
+    const updateUserResponse = await axios.put(`${API_BASE_URL}/users`, { email: "", metadata: { "Get Updates": "" } }, {
         headers: { Authorization: `Bearer ${jwt}` },
     });
     console.log(`✅ [Wallet ${index + 1}] Data pengguna diperbarui.`);
+    await logResponse("/users", updateUserResponse.data);
     await waitForEnter();
 
     await fetchBlockchainData(jwt, index);
@@ -115,6 +126,7 @@ async function fetchBlockchainData(jwt, index) {
             id: 1
         });
         console.log(`🔢 [Wallet ${index + 1}] Nomor blok terbaru:`, blockNumberResponse.data.result);
+        await logResponse("eth_blockNumber", blockNumberResponse.data);
         await waitForEnter();
 
         console.log(`📡 [Wallet ${index + 1}] Mengambil detail blok...`);
@@ -125,6 +137,7 @@ async function fetchBlockchainData(jwt, index) {
             id: 2
         });
         console.log(`📦 [Wallet ${index + 1}] Detail blok:`, blockDetailsResponse.data.result);
+        await logResponse("eth_getBlockByNumber", blockDetailsResponse.data);
         await waitForEnter();
     } catch (error) {
         console.error(`❌ [Wallet ${index + 1}] Gagal mengambil data blockchain:`, error.response ? error.response.data : error.message);

@@ -25,6 +25,12 @@ async function signAndAuthenticate(wallet) {
     try {
         // Mendapatkan nonce untuk autentikasi
         const nonceResponse = await axios.get(`${API_BASE_URL}/nonce`);
+        console.log("🔍 Response dari /nonce:", nonceResponse.data);
+        
+        if (!nonceResponse.data || !nonceResponse.data.messageToSign) {
+            throw new Error("Response dari /nonce tidak valid.");
+        }
+
         const messageToSign = nonceResponse.data.messageToSign;
         console.log("📜 Pesan untuk ditandatangani:", messageToSign);
 
@@ -43,11 +49,15 @@ async function signAndAuthenticate(wallet) {
             network: CHAIN_ID.toString(),
         });
         
+        if (!verifyResponse.data || !verifyResponse.data.jwt) {
+            throw new Error("Verifikasi gagal, JWT tidak ditemukan dalam respons.");
+        }
+
         const jwt = verifyResponse.data.jwt;
         console.log("✅ Autentikasi sukses, JWT:", jwt);
         return jwt;
     } catch (error) {
-        console.error("❌ Gagal autentikasi:", error.response ? error.response.data : error);
+        console.error("❌ Gagal autentikasi:", error.response ? error.response.data : error.message);
     }
 }
 

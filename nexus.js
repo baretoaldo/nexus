@@ -1,6 +1,6 @@
-const fs = require("fs");
-const axios = require("axios");
-const { ethers } = require("ethers");
+import fs from "fs";
+import axios from "axios";
+import { ethers } from "ethers";
 
 // Konfigurasi jaringan Nexus
 const RPC_URL = "https://rpc.nexus.xyz/http";

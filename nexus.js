@@ -62,6 +62,31 @@ async function signAndAuthenticate(wallet) {
     }
 }
 
+async function fetchBlockchainData(jwt) {
+    try {
+        // Mendapatkan nomor blok terbaru
+        const blockNumberResponse = await axios.post(`${RPC_URL}`, {
+            jsonrpc: "2.0",
+            method: "eth_blockNumber",
+            params: [],
+            id: 1
+        });
+        const blockNumber = blockNumberResponse.data.result;
+        console.log("🔢 Nomor blok terbaru:", blockNumber);
+
+        // Mengambil detail blok berdasarkan nomor
+        const blockDetailsResponse = await axios.post(`${RPC_URL}`, {
+            jsonrpc: "2.0",
+            method: "eth_getBlockByNumber",
+            params: [blockNumber, false],
+            id: 2
+        });
+        console.log("📦 Detail blok:", blockDetailsResponse.data.result);
+    } catch (error) {
+        console.error("❌ Gagal mengambil data blockchain:", error.response ? error.response.data : error.message);
+    }
+}
+
 async function main() {
     for (const pk of privateKeys) {
         console.log("\n🚀 Memulai koneksi untuk private key");
@@ -71,11 +96,22 @@ async function main() {
         const jwt = await signAndAuthenticate(wallet);
         if (!jwt) continue;
 
+        // Memilih wallet yang digunakan
+        await axios.put(`${API_BASE_URL}/users/wallets/selection`, {
+            walletId: wallet.address
+        }, {
+            headers: { Authorization: `Bearer ${jwt}` },
+        });
+        console.log("✅ Wallet berhasil dipilih.");
+
         // Menggunakan JWT untuk mengupdate user data
         await axios.put(`${API_BASE_URL}/users`, { email: "", metadata: { "Get Updates": "" } }, {
             headers: { Authorization: `Bearer ${jwt}` },
         });
         console.log("🔄 Data pengguna diperbarui.");
+
+        // Mengambil data blockchain dari Nexus
+        await fetchBlockchainData(jwt);
     }
 }
 

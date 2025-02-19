@@ -1,6 +1,12 @@
 import fs from "fs";
 import axios from "axios";
 import { ethers } from "ethers";
+import readline from "readline";
+
+const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+});
 
 // Konfigurasi jaringan Nexus
 const RPC_URL = "https://rpc.nexus.xyz/http";
@@ -14,11 +20,16 @@ async function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function waitForEnter() {
+    return new Promise(resolve => rl.question("Tekan ENTER untuk melanjutkan ke endpoint berikutnya...", resolve));
+}
+
 async function connectWallet(privateKey) {
     try {
         const provider = new ethers.JsonRpcProvider(RPC_URL);
         const wallet = new ethers.Wallet(privateKey, provider);
         console.log(`🔗 Wallet ${wallet.address} terhubung ke Nexus.`);
+        await waitForEnter();
         return wallet;
     } catch (error) {
         console.error("❌ Gagal menghubungkan wallet:", error);
@@ -27,9 +38,9 @@ async function connectWallet(privateKey) {
 
 async function signAndAuthenticate(wallet) {
     try {
-        await delay(2000);
         const nonceResponse = await axios.get(`${API_BASE_URL}/nonce`);
         console.log("🔍 Response dari /nonce:", nonceResponse.data);
+        await waitForEnter();
         
         if (!nonceResponse.data || !nonceResponse.data.nonce) {
             throw new Error("Response dari /nonce tidak valid.");
@@ -38,12 +49,12 @@ async function signAndAuthenticate(wallet) {
         const nonce = nonceResponse.data.nonce;
         const messageToSign = `app.nexus.xyz wants you to sign in with your Ethereum account:\n${wallet.address}\n\nNonce: ${nonce}`;
         console.log("📜 Pesan untuk ditandatangani:", messageToSign);
+        await waitForEnter();
 
-        await delay(2000);
         const signedMessage = await wallet.signMessage(messageToSign);
         console.log("✍️ Tanda tangan berhasil:", signedMessage);
+        await waitForEnter();
 
-        await delay(2000);
         const verifyResponse = await axios.post(`${API_BASE_URL}/verify`, {
             signedMessage,
             messageToSign,
@@ -53,6 +64,7 @@ async function signAndAuthenticate(wallet) {
             walletProvider: "browserExtension",
             network: CHAIN_ID.toString(),
         });
+        await waitForEnter();
         
         if (!verifyResponse.data || !verifyResponse.data.jwt) {
             throw new Error("Verifikasi gagal, JWT tidak ditemukan dalam respons.");
@@ -74,7 +86,6 @@ async function processWallet(pk, index) {
     const jwt = await signAndAuthenticate(wallet);
     if (!jwt) return;
 
-    await delay(2000);
     console.log(`🔄 [Wallet ${index + 1}] Memilih wallet...`);
     await axios.put(`${API_BASE_URL}/users/wallets/selection`, {
         walletId: wallet.address
@@ -82,20 +93,20 @@ async function processWallet(pk, index) {
         headers: { Authorization: `Bearer ${jwt}` },
     });
     console.log(`✅ [Wallet ${index + 1}] Wallet berhasil dipilih.`);
+    await waitForEnter();
 
-    await delay(2000);
     console.log(`🔄 [Wallet ${index + 1}] Memperbarui data pengguna...`);
     await axios.put(`${API_BASE_URL}/users`, { email: "", metadata: { "Get Updates": "" } }, {
         headers: { Authorization: `Bearer ${jwt}` },
     });
     console.log(`✅ [Wallet ${index + 1}] Data pengguna diperbarui.`);
+    await waitForEnter();
 
     await fetchBlockchainData(jwt, index);
 }
 
 async function fetchBlockchainData(jwt, index) {
     try {
-        await delay(2000);
         console.log(`📡 [Wallet ${index + 1}] Mengambil nomor blok terbaru...`);
         const blockNumberResponse = await axios.post(`${RPC_URL}`, {
             jsonrpc: "2.0",
@@ -103,18 +114,18 @@ async function fetchBlockchainData(jwt, index) {
             params: [],
             id: 1
         });
-        const blockNumber = blockNumberResponse.data.result;
-        console.log(`🔢 [Wallet ${index + 1}] Nomor blok terbaru: ${blockNumber}`);
+        console.log(`🔢 [Wallet ${index + 1}] Nomor blok terbaru:`, blockNumberResponse.data.result);
+        await waitForEnter();
 
-        await delay(2000);
         console.log(`📡 [Wallet ${index + 1}] Mengambil detail blok...`);
         const blockDetailsResponse = await axios.post(`${RPC_URL}`, {
             jsonrpc: "2.0",
             method: "eth_getBlockByNumber",
-            params: [blockNumber, false],
+            params: [blockNumberResponse.data.result, false],
             id: 2
         });
         console.log(`📦 [Wallet ${index + 1}] Detail blok:`, blockDetailsResponse.data.result);
+        await waitForEnter();
     } catch (error) {
         console.error(`❌ [Wallet ${index + 1}] Gagal mengambil data blockchain:`, error.response ? error.response.data : error.message);
     }
@@ -124,6 +135,7 @@ async function main() {
     for (let i = 0; i < privateKeys.length; i++) {
         await processWallet(privateKeys[i], i);
     }
+    rl.close();
 }
 
 main();

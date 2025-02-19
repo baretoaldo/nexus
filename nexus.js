@@ -14,6 +14,58 @@ async function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function connectWallet(privateKey) {
+    try {
+        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const wallet = new ethers.Wallet(privateKey, provider);
+        console.log(`🔗 Wallet ${wallet.address} terhubung ke Nexus.`);
+        return wallet;
+    } catch (error) {
+        console.error("❌ Gagal menghubungkan wallet:", error);
+    }
+}
+
+async function signAndAuthenticate(wallet) {
+    try {
+        await delay(2000);
+        const nonceResponse = await axios.get(`${API_BASE_URL}/nonce`);
+        console.log("🔍 Response dari /nonce:", nonceResponse.data);
+        
+        if (!nonceResponse.data || !nonceResponse.data.nonce) {
+            throw new Error("Response dari /nonce tidak valid.");
+        }
+
+        const nonce = nonceResponse.data.nonce;
+        const messageToSign = `app.nexus.xyz wants you to sign in with your Ethereum account:\n${wallet.address}\n\nNonce: ${nonce}`;
+        console.log("📜 Pesan untuk ditandatangani:", messageToSign);
+
+        await delay(2000);
+        const signedMessage = await wallet.signMessage(messageToSign);
+        console.log("✍️ Tanda tangan berhasil:", signedMessage);
+
+        await delay(2000);
+        const verifyResponse = await axios.post(`${API_BASE_URL}/verify`, {
+            signedMessage,
+            messageToSign,
+            publicWalletAddress: wallet.address,
+            chain: "EVM",
+            walletName: "metamask",
+            walletProvider: "browserExtension",
+            network: CHAIN_ID.toString(),
+        });
+        
+        if (!verifyResponse.data || !verifyResponse.data.jwt) {
+            throw new Error("Verifikasi gagal, JWT tidak ditemukan dalam respons.");
+        }
+
+        const jwt = verifyResponse.data.jwt;
+        console.log("✅ Autentikasi sukses, JWT:", jwt);
+        return jwt;
+    } catch (error) {
+        console.error("❌ Gagal autentikasi:", error.response ? error.response.data : error.message);
+    }
+}
+
 async function processWallet(pk, index) {
     console.log(`\n🚀 Memproses Wallet ke-${index + 1}`);
     const wallet = await connectWallet(pk);

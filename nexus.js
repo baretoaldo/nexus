@@ -203,7 +203,7 @@ async function processAccount(wallet) {
 }
 
 async function main() {
-    const privateKeys = fs.readFileSync('data.txt', 'utf-8').trim().split('\n');
+    const privateKeys = fs.readFileSync('pk.txt', 'utf-8').trim().split('\n');
 
     for (let pk of privateKeys) {
         const wallet = new Wallet(`0x${pk}`);

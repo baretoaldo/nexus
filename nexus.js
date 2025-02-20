@@ -4,6 +4,7 @@ import axios from 'axios';
 import moment from 'moment';
 
 const API_BASE = 'https://app.dynamicauth.com/api/v0/sdk/adc09cea-6194-4667-8be8-931cc28dacd2';
+const ORCHESTRATOR_BASE = 'https://beta.orchestrator.nexus.xyz';
 
 async function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -26,76 +27,101 @@ async function requestWithRetry(url, options, retries = 5, delayMs = 1000) {
     throw new Error('Max retries reached');
 }
 
+async function getNonce(address) {
+    const response = await requestWithRetry(`${API_BASE}/nonce`, { method: 'GET' });
+    return response.data.nonce;
+}
+
+async function verifySignature(address, nonce, wallet) {
+    const message = `app.nexus.xyz wants you to sign in with your Ethereum account:\n${address}\n\nNonce: ${nonce}`;
+    const signedMessage = await wallet.signMessage(message);
+
+    const response = await requestWithRetry(`${API_BASE}/verify`, {
+        method: 'POST',
+        data: {
+            signedMessage,
+            messageToSign: message,
+            publicWalletAddress: address,
+            chain: 'EVM',
+            walletName: 'metamask',
+            walletProvider: 'browserExtension',
+            network: '392'
+        }
+    });
+
+    return response.data.jwt;
+}
+
+async function createNode(jwt) {
+    const response = await requestWithRetry(`${ORCHESTRATOR_BASE}/nodes`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${jwt}`,
+            'Content-Type': 'application/octet-stream'
+        },
+        data: jwt
+    });
+
+    return response.data;
+}
+
+async function createTask(nodeId) {
+    const response = await requestWithRetry(`${ORCHESTRATOR_BASE}/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        data: nodeId
+    });
+
+    return response.data;
+}
+
+async function submitTask(taskId) {
+    const response = await requestWithRetry(`${ORCHESTRATOR_BASE}/tasks/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        data: `${taskId}\x1a\x0cweb-99-0/100`
+    });
+
+    return response.data;
+}
+
+async function processAccount(wallet) {
+    try {
+        const address = await wallet.getAddress();
+        console.log(`[${moment().format()}] Processing Wallet: ${address}`);
+
+        // Step 1: Dapatkan nonce untuk akun ini
+        const nonce = await getNonce(address);
+        console.log(`[${moment().format()}] Nonce: ${nonce}`);
+
+        // Step 2: Verifikasi signature dan dapatkan JWT
+        const jwt = await verifySignature(address, nonce, wallet);
+        console.log(`[${moment().format()}] JWT Token: ${jwt}`);
+
+        // Step 3: Buat node menggunakan JWT
+        const nodeId = await createNode(jwt);
+        console.log(`[${moment().format()}] Node ID: ${nodeId}`);
+
+        // Step 4: Buat task berdasarkan node ID
+        const taskId = await createTask(nodeId);
+        console.log(`[${moment().format()}] Task ID: ${taskId}`);
+
+        // Step 5: Submit task
+        const submitResponse = await submitTask(taskId);
+        console.log(`[${moment().format()}] Task Submission Response: ${submitResponse.message}`);
+
+    } catch (error) {
+        console.error(`[${moment().format()}] Error: ${error.message}`);
+    }
+}
+
 async function main() {
     const privateKeys = fs.readFileSync('data.txt', 'utf-8').trim().split('\n');
-    
+
     for (let pk of privateKeys) {
-        try {
-            console.log(`[${moment().format()}] Processing wallet...`);
-            const wallet = new Wallet(`0x${pk}`);
-            const address = await wallet.getAddress();
-            console.log(`[${moment().format()}] Wallet Address: ${address}`);
-            
-            // Step 1: Connect Wallet (Dummy Request)
-            await requestWithRetry(`${API_BASE}/connect`, {
-                method: 'POST',
-                data: {
-                    address,
-                    chain: 'EVM',
-                    provider: 'browserExtension',
-                    walletName: 'metamask',
-                    authMode: 'connect-and-sign'
-                }
-            }).catch(() => {});
-            
-            // Step 2: Get Nonce
-            const nonceRes = await requestWithRetry(`${API_BASE}/nonce`, { method: 'GET' });
-            const nonce = nonceRes.data.nonce;
-            console.log(`[${moment().format()}] Nonce: ${nonce}`);
-            
-            // Step 3: Sign Message
-            const message = `app.nexus.xyz wants you to sign in with your Ethereum account:\n${address}\n\nNonce: ${nonce}`;
-            const signedMessage = await wallet.signMessage(message);
-            console.log(`[${moment().format()}] Signed Message: ${signedMessage}`);
-            
-            // Step 4: Verify Signature
-            const verifyRes = await requestWithRetry(`${API_BASE}/verify`, {
-                method: 'POST',
-                data: {
-                    signedMessage,
-                    messageToSign: message,
-                    publicWalletAddress: address,
-                    chain: 'EVM',
-                    walletName: 'metamask',
-                    walletProvider: 'browserExtension',
-                    network: '392'
-                }
-            });
-            const jwt = verifyRes.data.jwt;
-            console.log(`[${moment().format()}] JWT: ${jwt}`);
-            
-            // Step 5: Select Wallet
-            const walletId = verifyRes.data.user.verifiedCredentials[0].id;
-            await requestWithRetry(`${API_BASE}/users/wallets/selection`, {
-                method: 'PUT',
-                headers: { Authorization: `Bearer ${jwt}` },
-                data: { walletId }
-            });
-            console.log(`[${moment().format()}] Wallet selected.`);
-            
-            // Step 6: Finalize Registration
-            await requestWithRetry(`${API_BASE}/users`, {
-                method: 'PUT',
-                headers: { Authorization: `Bearer ${jwt}` },
-                data: { email: '', metadata: { "Get Updates": '' } }
-            });
-            console.log(`[${moment().format()}] Registration completed!`);
-            
-            // Delay before processing next wallet
-            await delay(5000);
-        } catch (error) {
-            console.error(`[${moment().format()}] Error: ${error.message}`);
-        }
+        const wallet = new Wallet(`0x${pk}`);
+        await processAccount(wallet);
+        await delay(5000); // Delay sebelum memproses akun berikutnya
     }
 }
 

@@ -27,7 +27,13 @@ async function requestWithRetry(url, options, retries = 5, delayMs = 1000) {
     throw new Error('Max retries reached');
 }
 
-// Fungsi untuk mendapatkan nonce dari JWT atau endpoint verify
+// Fungsi untuk mendapatkan nonce dari server
+async function getNonce(address) {
+    const response = await requestWithRetry(`${API_BASE}/nonce`, { method: 'GET' });
+    return response.data.nonce;
+}
+
+// Fungsi untuk verifikasi signature dan mendapatkan JWT
 async function verifySignature(address, nonce, wallet) {
     const message = `app.nexus.xyz wants you to sign in with your Ethereum account:\n${address}\n\nNonce: ${nonce}`;
     const signedMessage = await wallet.signMessage(message);
@@ -45,10 +51,10 @@ async function verifySignature(address, nonce, wallet) {
         }
     });
 
-    return response.data.jwt; // JWT yang mengandung UUID
+    return response.data.jwt;
 }
 
-// Fungsi untuk mendapatkan UUID dari JWT Token
+// Fungsi untuk mengekstrak UUID dari JWT
 function extractUUID(jwt) {
     try {
         const payload = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64').toString());
@@ -58,10 +64,10 @@ function extractUUID(jwt) {
     }
 }
 
-// Fungsi untuk mendapatkan nonce dari /nodes dengan format payload yang benar
-async function getNonceFromNodes(jwt, uuid) {
+// Fungsi untuk mendapatkan Node ID dari /nodes
+async function getNodeID(jwt, uuid) {
     const payload = Buffer.concat([
-        Buffer.from([0x12, 0x24]), // Prefix header binary seperti di capture.txt
+        Buffer.from([0x12, 0x24]), // Prefix seperti di capture.txt
         Buffer.from(uuid, 'utf-8') // UUID dalam bentuk string
     ]);
 
@@ -74,9 +80,10 @@ async function getNonceFromNodes(jwt, uuid) {
         data: payload
     });
 
-    return response.data; // Nonce yang didapat dari nodes
+    return response.data.trim(); // Menghapus karakter kosong
 }
 
+// Fungsi untuk mendapatkan Task ID dari /tasks
 async function createTask(nodeId) {
     const response = await requestWithRetry(`${ORCHESTRATOR_BASE}/tasks`, {
         method: 'POST',
@@ -84,46 +91,58 @@ async function createTask(nodeId) {
         data: nodeId
     });
 
-    return response.data;
+    return response.data.trim(); // Menghapus karakter kosong
 }
 
+// Fungsi untuk submit Task ke /tasks/submit
 async function submitTask(taskId) {
-    const response = await requestWithRetry(`${ORCHESTRATOR_BASE}/tasks/submit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream' },
-        data: `${taskId}\x1a\x0cweb-99-0/100`
-    });
+    const payload = Buffer.concat([
+        Buffer.from(taskId.trim(), 'utf-8'),
+        Buffer.from([0x1A, 0x0C]), // Sesuai dengan capture.txt
+        Buffer.from('web-99-0/100', 'utf-8')
+    ]);
 
-    return response.data;
+    try {
+        const response = await requestWithRetry(`${ORCHESTRATOR_BASE}/tasks/submit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            data: payload
+        });
+
+        return response.data;
+    } catch (error) {
+        console.error(`[${moment().format()}] Error saat submit task: ${error.response?.data || error.message}`);
+        throw error;
+    }
 }
 
+// Fungsi utama untuk memproses setiap akun
 async function processAccount(wallet) {
     try {
         const address = await wallet.getAddress();
         console.log(`[${moment().format()}] Processing Wallet: ${address}`);
 
-        // Step 1: Ambil nonce dari /nonce
-        const nonceResponse = await requestWithRetry(`${API_BASE}/nonce`, { method: 'GET' });
-        const nonce = nonceResponse.data.nonce;
+        // Step 1: Dapatkan nonce dari server
+        const nonce = await getNonce(address);
         console.log(`[${moment().format()}] Nonce: ${nonce}`);
 
         // Step 2: Verifikasi signature dan dapatkan JWT
         const jwt = await verifySignature(address, nonce, wallet);
         console.log(`[${moment().format()}] JWT Token: ${jwt}`);
 
-        // Step 3: Ekstrak UUID dari JWT Token
+        // Step 3: Ekstrak UUID dari JWT
         const uuid = extractUUID(jwt);
         console.log(`[${moment().format()}] UUID: ${uuid}`);
 
-        // Step 4: Gunakan UUID dalam payload untuk request /nodes
-        const nodeId = await getNonceFromNodes(jwt, uuid);
+        // Step 4: Dapatkan Node ID dari /nodes
+        const nodeId = await getNodeID(jwt, uuid);
         console.log(`[${moment().format()}] Node ID: ${nodeId}`);
 
-        // Step 5: Buat task menggunakan node ID
+        // Step 5: Dapatkan Task ID dari /tasks
         const taskId = await createTask(nodeId);
         console.log(`[${moment().format()}] Task ID: ${taskId}`);
 
-        // Step 6: Submit task
+        // Step 6: Submit task ke /tasks/submit
         const submitResponse = await submitTask(taskId);
         console.log(`[${moment().format()}] Task Submission Response: ${submitResponse.message}`);
 
@@ -132,6 +151,7 @@ async function processAccount(wallet) {
     }
 }
 
+// Fungsi utama untuk menjalankan proses akun secara berulang
 async function main() {
     const privateKeys = fs.readFileSync('data.txt', 'utf-8').trim().split('\n');
 

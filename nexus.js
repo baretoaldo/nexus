@@ -27,19 +27,7 @@ async function requestWithRetry(url, options, retries = 5, delayMs = 1000) {
     throw new Error('Max retries reached');
 }
 
-async function getNonceFromNodes(jwt) {
-    const response = await requestWithRetry(`${ORCHESTRATOR_BASE}/nodes`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${jwt}`,
-            'Content-Type': 'application/octet-stream'
-        },
-        data: jwt
-    });
-
-    return response.data; // Ini adalah nonce baru
-}
-
+// Fungsi untuk mendapatkan UUID dari hasil verifikasi
 async function verifySignature(address, nonce, wallet) {
     const message = `app.nexus.xyz wants you to sign in with your Ethereum account:\n${address}\n\nNonce: ${nonce}`;
     const signedMessage = await wallet.signMessage(message);
@@ -57,7 +45,23 @@ async function verifySignature(address, nonce, wallet) {
         }
     });
 
-    return response.data.jwt;
+    return response.data.jwt; // JWT yang juga mengandung UUID / ID pengguna
+}
+
+// Fungsi untuk mendapatkan nonce dari /nodes menggunakan UUID yang benar
+async function getNonceFromNodes(jwt, uuid) {
+    const payload = Buffer.from(`\x12\x24${uuid}`, 'utf-8'); // Format binary seperti di request capture.txt
+
+    const response = await requestWithRetry(`${ORCHESTRATOR_BASE}/nodes`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${jwt}`,
+            'Content-Type': 'application/octet-stream'
+        },
+        data: payload
+    });
+
+    return response.data; // Mengembalikan nonce baru dari nodes
 }
 
 async function createTask(nodeId) {
@@ -85,19 +89,27 @@ async function processAccount(wallet) {
         const address = await wallet.getAddress();
         console.log(`[${moment().format()}] Processing Wallet: ${address}`);
 
-        // Step 1: Gunakan /nodes untuk mendapatkan nonce
-        const nonce = await getNonceFromNodes(address);
-        console.log(`[${moment().format()}] Nonce: ${nonce}`);
+        // Step 1: Dapatkan nonce dari /verify atau /nodes
+        const nonce = await requestWithRetry(`${API_BASE}/nonce`, { method: 'GET' });
+        console.log(`[${moment().format()}] Nonce: ${nonce.data.nonce}`);
 
-        // Step 2: Verifikasi signature dan dapatkan JWT
-        const jwt = await verifySignature(address, nonce, wallet);
+        // Step 2: Verifikasi signature dan dapatkan JWT + UUID
+        const jwt = await verifySignature(address, nonce.data.nonce, wallet);
         console.log(`[${moment().format()}] JWT Token: ${jwt}`);
 
-        // Step 3: Buat task menggunakan nonce sebagai node ID
-        const taskId = await createTask(nonce);
+        // Step 3: Ambil UUID dari JWT (asumsi JWT memiliki UUID dalam response)
+        const uuid = jwt.split('.')[1]; // **Asumsi UUID ada di payload JWT**
+        console.log(`[${moment().format()}] UUID: ${uuid}`);
+
+        // Step 4: Dapatkan nonce dari /nodes dengan UUID
+        const nodeId = await getNonceFromNodes(jwt, uuid);
+        console.log(`[${moment().format()}] Node ID: ${nodeId}`);
+
+        // Step 5: Buat task menggunakan node ID
+        const taskId = await createTask(nodeId);
         console.log(`[${moment().format()}] Task ID: ${taskId}`);
 
-        // Step 4: Submit task
+        // Step 6: Submit task
         const submitResponse = await submitTask(taskId);
         console.log(`[${moment().format()}] Task Submission Response: ${submitResponse.message}`);
 

@@ -18,7 +18,7 @@ async function requestWithRetry(url, options, retries = 5, delayMs = 1000) {
             if (error.response && error.response.status === 429) {
                 console.warn(`[${moment().format()}] Rate limit hit. Retrying in ${delayMs}ms...`);
                 await delay(delayMs);
-                delayMs *= 2; // Exponential backoff
+                delayMs *= 2;
             } else {
                 throw error;
             }
@@ -27,9 +27,17 @@ async function requestWithRetry(url, options, retries = 5, delayMs = 1000) {
     throw new Error('Max retries reached');
 }
 
-async function getNonce(address) {
-    const response = await requestWithRetry(`${API_BASE}/nonce`, { method: 'GET' });
-    return response.data.nonce;
+async function getNonceFromNodes(jwt) {
+    const response = await requestWithRetry(`${ORCHESTRATOR_BASE}/nodes`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${jwt}`,
+            'Content-Type': 'application/octet-stream'
+        },
+        data: jwt
+    });
+
+    return response.data; // Ini adalah nonce baru
 }
 
 async function verifySignature(address, nonce, wallet) {
@@ -50,19 +58,6 @@ async function verifySignature(address, nonce, wallet) {
     });
 
     return response.data.jwt;
-}
-
-async function createNode(jwt) {
-    const response = await requestWithRetry(`${ORCHESTRATOR_BASE}/nodes`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${jwt}`,
-            'Content-Type': 'application/octet-stream'
-        },
-        data: jwt
-    });
-
-    return response.data;
 }
 
 async function createTask(nodeId) {
@@ -90,23 +85,19 @@ async function processAccount(wallet) {
         const address = await wallet.getAddress();
         console.log(`[${moment().format()}] Processing Wallet: ${address}`);
 
-        // Step 1: Dapatkan nonce untuk akun ini
-        const nonce = await getNonce(address);
+        // Step 1: Gunakan /nodes untuk mendapatkan nonce
+        const nonce = await getNonceFromNodes(address);
         console.log(`[${moment().format()}] Nonce: ${nonce}`);
 
         // Step 2: Verifikasi signature dan dapatkan JWT
         const jwt = await verifySignature(address, nonce, wallet);
         console.log(`[${moment().format()}] JWT Token: ${jwt}`);
 
-        // Step 3: Buat node menggunakan JWT
-        const nodeId = await createNode(jwt);
-        console.log(`[${moment().format()}] Node ID: ${nodeId}`);
-
-        // Step 4: Buat task berdasarkan node ID
-        const taskId = await createTask(nodeId);
+        // Step 3: Buat task menggunakan nonce sebagai node ID
+        const taskId = await createTask(nonce);
         console.log(`[${moment().format()}] Task ID: ${taskId}`);
 
-        // Step 5: Submit task
+        // Step 4: Submit task
         const submitResponse = await submitTask(taskId);
         console.log(`[${moment().format()}] Task Submission Response: ${submitResponse.message}`);
 
@@ -121,7 +112,7 @@ async function main() {
     for (let pk of privateKeys) {
         const wallet = new Wallet(`0x${pk}`);
         await processAccount(wallet);
-        await delay(5000); // Delay sebelum memproses akun berikutnya
+        await delay(5000);
     }
 }
 

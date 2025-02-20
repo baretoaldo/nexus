@@ -1,96 +1,101 @@
-import fs from "fs";
-import axios from "axios";
-import { ethers } from "ethers";
+import fs from 'fs';
+import { Wallet } from 'ethers';
+import axios from 'axios';
+import moment from 'moment';
 
-const responseLogFile = "respon.txt";
+const API_BASE = 'https://app.dynamicauth.com/api/v0/sdk/adc09cea-6194-4667-8be8-931cc28dacd2';
 
-// Konfigurasi jaringan Nexus
-const RPC_URL = "https://rpc.nexus.xyz/http";
-const CHAIN_ID = 392;
-const API_BASE_URL = "https://app.dynamicauth.com/api/v0/sdk/adc09cea-6194-4667-8be8-931cc28dacd2";
-
-// Membaca private keys dari data.txt
-const privateKeys = fs.readFileSync("data.txt", "utf-8").trim().split("\n");
-
-async function logResponse(endpoint, data) {
-    const logEntry = `Endpoint: ${endpoint}\nResponse: ${JSON.stringify(data, null, 2)}\n\n`;
-    fs.appendFileSync(responseLogFile, logEntry);
+async function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function connectWallet(privateKey) {
-    try {
-        const provider = new ethers.JsonRpcProvider(RPC_URL);
-        const wallet = new ethers.Wallet(privateKey, provider);
-        console.log(`🔗 Wallet ${wallet.address} terhubung ke Nexus.`);
-        return wallet;
-    } catch (error) {
-        console.error("❌ Gagal menghubungkan wallet:", error);
-    }
-}
-
-async function signAndAuthenticate(wallet) {
-    try {
-        const nonceResponse = await axios.get(`${API_BASE_URL}/nonce`);
-        logResponse("/nonce", nonceResponse.data);
-        
-        if (!nonceResponse.data || !nonceResponse.data.nonce) {
-            throw new Error("Response dari /nonce tidak valid.");
+async function requestWithRetry(url, options, retries = 5, delayMs = 1000) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            return await axios(url, options);
+        } catch (error) {
+            if (error.response && error.response.status === 429) {
+                console.warn(`[${moment().format()}] Rate limit hit. Retrying in ${delayMs}ms...`);
+                await delay(delayMs);
+                delayMs *= 2; // Exponential backoff
+            } else {
+                throw error;
+            }
         }
-
-        const nonce = nonceResponse.data.nonce;
-        const messageToSign = `app.nexus.xyz wants you to sign in with your Ethereum account:\n${wallet.address}\n\nNonce: ${nonce}`;
-        
-        const signedMessage = await wallet.signMessage(messageToSign);
-
-        const verifyResponse = await axios.post(`${API_BASE_URL}/verify`, {
-            signedMessage,
-            messageToSign,
-            publicWalletAddress: wallet.address,
-            chain: "EVM",
-            walletName: "metamask",
-            walletProvider: "browserExtension",
-            network: CHAIN_ID.toString(),
-        });
-        logResponse("/verify", verifyResponse.data);
-        
-        if (!verifyResponse.data || !verifyResponse.data.jwt) {
-            throw new Error("Verifikasi gagal, JWT tidak ditemukan dalam respons.");
-        }
-
-        return verifyResponse.data.jwt;
-    } catch (error) {
-        console.error("❌ Gagal autentikasi:", error.response ? error.response.data : error.message);
     }
-}
-
-async function processWallet(pk, index) {
-    console.log(`\n🚀 Memproses Wallet ke-${index + 1}`);
-    const wallet = await connectWallet(pk);
-    if (!wallet) return;
-
-    const jwt = await signAndAuthenticate(wallet);
-    if (!jwt) return;
-
-    console.log(`🔄 [Wallet ${index + 1}] Memilih wallet...`);
-    const selectionResponse = await axios.put(`${API_BASE_URL}/users/wallets/selection`, {
-        walletId: wallet.address
-    }, {
-        headers: { Authorization: `Bearer ${jwt}` },
-    });
-    logResponse("/users/wallets/selection", selectionResponse.data);
-    console.log(`✅ [Wallet ${index + 1}] Wallet berhasil dipilih.`);
-
-    console.log(`🔄 [Wallet ${index + 1}] Memperbarui data pengguna...`);
-    const updateUserResponse = await axios.put(`${API_BASE_URL}/users`, { email: "", metadata: { "Get Updates": "" } }, {
-        headers: { Authorization: `Bearer ${jwt}` },
-    });
-    logResponse("/users", updateUserResponse.data);
-    console.log(`✅ [Wallet ${index + 1}] Data pengguna diperbarui.`);
+    throw new Error('Max retries reached');
 }
 
 async function main() {
-    for (let i = 0; i < privateKeys.length; i++) {
-        await processWallet(privateKeys[i], i);
+    const privateKeys = fs.readFileSync('data.txt', 'utf-8').trim().split('\n');
+    
+    for (let pk of privateKeys) {
+        try {
+            console.log(`[${moment().format()}] Processing wallet...`);
+            const wallet = new Wallet(`0x${pk}`);
+            const address = await wallet.getAddress();
+            console.log(`[${moment().format()}] Wallet Address: ${address}`);
+            
+            // Step 1: Connect Wallet (Dummy Request)
+            await requestWithRetry(`${API_BASE}/connect`, {
+                method: 'POST',
+                data: {
+                    address,
+                    chain: 'EVM',
+                    provider: 'browserExtension',
+                    walletName: 'metamask',
+                    authMode: 'connect-and-sign'
+                }
+            }).catch(() => {});
+            
+            // Step 2: Get Nonce
+            const nonceRes = await requestWithRetry(`${API_BASE}/nonce`, { method: 'GET' });
+            const nonce = nonceRes.data.nonce;
+            console.log(`[${moment().format()}] Nonce: ${nonce}`);
+            
+            // Step 3: Sign Message
+            const message = `app.nexus.xyz wants you to sign in with your Ethereum account:\n${address}\n\nNonce: ${nonce}`;
+            const signedMessage = await wallet.signMessage(message);
+            console.log(`[${moment().format()}] Signed Message: ${signedMessage}`);
+            
+            // Step 4: Verify Signature
+            const verifyRes = await requestWithRetry(`${API_BASE}/verify`, {
+                method: 'POST',
+                data: {
+                    signedMessage,
+                    messageToSign: message,
+                    publicWalletAddress: address,
+                    chain: 'EVM',
+                    walletName: 'metamask',
+                    walletProvider: 'browserExtension',
+                    network: '392'
+                }
+            });
+            const jwt = verifyRes.data.jwt;
+            console.log(`[${moment().format()}] JWT: ${jwt}`);
+            
+            // Step 5: Select Wallet
+            const walletId = verifyRes.data.user.verifiedCredentials[0].id;
+            await requestWithRetry(`${API_BASE}/users/wallets/selection`, {
+                method: 'PUT',
+                headers: { Authorization: `Bearer ${jwt}` },
+                data: { walletId }
+            });
+            console.log(`[${moment().format()}] Wallet selected.`);
+            
+            // Step 6: Finalize Registration
+            await requestWithRetry(`${API_BASE}/users`, {
+                method: 'PUT',
+                headers: { Authorization: `Bearer ${jwt}` },
+                data: { email: '', metadata: { "Get Updates": '' } }
+            });
+            console.log(`[${moment().format()}] Registration completed!`);
+            
+            // Delay before processing next wallet
+            await delay(5000);
+        } catch (error) {
+            console.error(`[${moment().format()}] Error: ${error.message}`);
+        }
     }
 }
 

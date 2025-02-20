@@ -14,10 +14,29 @@ async function delay(ms) {
 async function requestWithRetry(url, options, retries = 5, delayMs = 1000) {
     for (let i = 0; i < retries; i++) {
         try {
-            return await axios(url, options);
+            const response = await axios(url, options);
+            
+            // Log detailed response information
+            console.log(`\n[${moment().format()}] Response Details for ${url}:`);
+            console.log('Status:', response.status);
+            console.log('Headers:', JSON.stringify(response.headers, null, 2));
+            console.log('Data:', typeof response.data === 'object' ? JSON.stringify(response.data, null, 2) : response.data);
+            
+            return response;
         } catch (error) {
+            console.log(`\n[${moment().format()}] Error Details for ${url}:`);
+            console.log('Request Config:', JSON.stringify(options, null, 2));
+            
+            if (error.response) {
+                console.log('Status:', error.response.status);
+                console.log('Headers:', JSON.stringify(error.response.headers, null, 2));
+                console.log('Error Data:', error.response.data);
+            } else {
+                console.log('Error:', error.message);
+            }
+
             if (error.response && error.response.status === 429) {
-                console.warn(`[${moment().format()}] Rate limit hit. Retrying in ${delayMs}ms...`);
+                console.warn(`Rate limit hit. Retrying in ${delayMs}ms...`);
                 await delay(delayMs);
                 delayMs *= 2;
             } else {
@@ -80,53 +99,72 @@ async function getNodeID(jwt, uuid) {
 
         return response.data.trim();
     } catch (error) {
-        console.error(`[${moment().format()}] Error saat mendapatkan Node ID: ${error.response?.data || error.message}`);
+        console.error(`Error saat mendapatkan Node ID: ${error.message}`);
         throw error;
     }
 }
 
-async function createTask(nodeId) {
-    console.log(`[${moment().format()}] Mengirim Node ID ke /tasks: ${nodeId}`);
-
+async function createTask(nodeId, jwt) {
+    console.log(`\n[${moment().format()}] Creating Task for Node ID: ${nodeId}`);
+    console.log('Payload Details:');
+    
     const nodeIdVarint = Buffer.from(varint.encode(parseInt(nodeId)));
-
     const payload = Buffer.concat([
         Buffer.from([0x08]),
         nodeIdVarint
     ]);
 
+    console.log('Raw Payload:', payload);
+    console.log('Payload as Hex:', payload.toString('hex'));
+
     try {
         const response = await requestWithRetry(`${ORCHESTRATOR_BASE}/tasks`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/octet-stream' },
+            headers: {
+                'Authorization': `Bearer ${jwt}`,
+                'Content-Type': 'application/octet-stream',
+                'Accept': '*/*',
+                'Origin': 'https://app.nexus.xyz',
+                'Referer': 'https://app.nexus.xyz/',
+            },
             data: payload
         });
 
         return response.data.trim();
     } catch (error) {
-        console.error(`[${moment().format()}] Error saat mengirim Node ID ke /tasks: ${error.response?.data || error.message}`);
+        console.error(`Error saat mengirim Node ID ke /tasks: ${error.message}`);
         throw error;
     }
 }
 
-async function submitTask(taskId) {
-    console.log(`[${moment().format()}] Mengirim Task ID ke /tasks/submit: ${taskId}`);
-
+async function submitTask(taskId, jwt) {
+    console.log(`\n[${moment().format()}] Submitting Task ID: ${taskId}`);
+    console.log('Payload Details:');
+    
     const payload = Buffer.concat([
         Buffer.from(taskId.toString(), 'utf-8'),
         Buffer.from('web-99-0/100', 'utf-8')
     ]);
 
+    console.log('Raw Payload:', payload);
+    console.log('Payload as Hex:', payload.toString('hex'));
+
     try {
         const response = await requestWithRetry(`${ORCHESTRATOR_BASE}/tasks/submit`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/octet-stream' },
+            headers: {
+                'Content-Type': 'application/octet-stream',
+                'Authorization': `Bearer ${jwt}`,
+                'Accept': '*/*',
+                'Origin': 'https://app.nexus.xyz',
+                'Referer': 'https://app.nexus.xyz/',
+            },
             data: payload
         });
 
         return response.data;
     } catch (error) {
-        console.error(`[${moment().format()}] Error saat submit task: ${error.response?.data || error.message}`);
+        console.error(`Error saat submit task: ${error.message}`);
         throw error;
     }
 }
@@ -134,28 +172,33 @@ async function submitTask(taskId) {
 async function processAccount(wallet) {
     try {
         const address = await wallet.getAddress();
-        console.log(`[${moment().format()}] Processing Wallet: ${address}`);
+        console.log(`\n[${moment().format()}] Processing Wallet: ${address}`);
 
         const nonce = await getNonce(address);
-        console.log(`[${moment().format()}] Nonce: ${nonce}`);
+        console.log(`Nonce: ${nonce}`);
 
         const jwt = await verifySignature(address, nonce, wallet);
-        console.log(`[${moment().format()}] JWT Token: ${jwt}`);
+        console.log(`JWT Token: ${jwt}`);
 
         const uuid = extractUUID(jwt);
-        console.log(`[${moment().format()}] UUID: ${uuid}`);
+        console.log(`UUID: ${uuid}`);
 
         const nodeId = await getNodeID(jwt, uuid);
-        console.log(`[${moment().format()}] Node ID: ${nodeId}`);
+        console.log(`Node ID: ${nodeId}`);
 
-        const taskId = await createTask(nodeId);
-        console.log(`[${moment().format()}] Task ID: ${taskId}`);
+        const taskId = await createTask(nodeId, jwt);
+        console.log(`Task ID: ${taskId}`);
 
-        const submitResponse = await submitTask(taskId);
-        console.log(`[${moment().format()}] Task Submission Response: ${submitResponse.message}`);
+        const submitResponse = await submitTask(taskId, jwt);
+        console.log(`Task Submission Response:`, submitResponse);
 
     } catch (error) {
-        console.error(`[${moment().format()}] Error: ${error.message}`);
+        console.error(`\n[${moment().format()}] Error in processAccount: ${error.message}`);
+        if (error.response) {
+            console.error('Response Status:', error.response.status);
+            console.error('Response Headers:', error.response.headers);
+            console.error('Response Data:', error.response.data);
+        }
     }
 }
 

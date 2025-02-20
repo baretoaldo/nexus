@@ -2,6 +2,7 @@ import fs from 'fs';
 import { Wallet } from 'ethers';
 import axios from 'axios';
 import moment from 'moment';
+import varint from 'varint'; // Pastikan install dulu dengan `npm install varint`
 
 const API_BASE = 'https://app.dynamicauth.com/api/v0/sdk/adc09cea-6194-4667-8be8-931cc28dacd2';
 const ORCHESTRATOR_BASE = 'https://beta.orchestrator.nexus.xyz';
@@ -71,31 +72,54 @@ async function getNodeID(jwt, uuid) {
         Buffer.from(uuid, 'utf-8') // UUID dalam bentuk string
     ]);
 
-    const response = await requestWithRetry(`${ORCHESTRATOR_BASE}/nodes`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${jwt}`,
-            'Content-Type': 'application/octet-stream'
-        },
-        data: payload
-    });
+    try {
+        const response = await requestWithRetry(`${ORCHESTRATOR_BASE}/nodes`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${jwt}`,
+                'Content-Type': 'application/octet-stream'
+            },
+            data: payload
+        });
 
-    return response.data.trim(); // Menghapus karakter kosong
+        return response.data.trim(); // Menghapus karakter kosong
+    } catch (error) {
+        console.error(`[${moment().format()}] Error saat mendapatkan Node ID: ${error.response?.data || error.message}`);
+        throw error;
+    }
 }
 
 // Fungsi untuk mendapatkan Task ID dari /tasks
 async function createTask(nodeId) {
-    const response = await requestWithRetry(`${ORCHESTRATOR_BASE}/tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream' },
-        data: nodeId
-    });
+    console.log(`[${moment().format()}] Mengirim Node ID ke /tasks: ${nodeId}`);
 
-    return response.data.trim(); // Menghapus karakter kosong
+    // Konversi Node ID ke format varint (Protobuf integer encoding)
+    const nodeIdVarint = Buffer.from(varint.encode(parseInt(nodeId)));
+
+    // Format payload sesuai dengan capture.txt
+    const payload = Buffer.concat([
+        Buffer.from([0x08]), // Prefix kemungkinan dari Protobuf
+        nodeIdVarint // ID dalam format varint
+    ]);
+
+    try {
+        const response = await requestWithRetry(`${ORCHESTRATOR_BASE}/tasks`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            data: payload
+        });
+
+        return response.data.trim(); // Menghapus karakter kosong
+    } catch (error) {
+        console.error(`[${moment().format()}] Error saat mengirim Node ID ke /tasks: ${error.response?.data || error.message}`);
+        throw error;
+    }
 }
 
 // Fungsi untuk submit Task ke /tasks/submit
 async function submitTask(taskId) {
+    console.log(`[${moment().format()}] Mengirim Task ID ke /tasks/submit: ${taskId}`);
+
     const payload = Buffer.concat([
         Buffer.from(taskId.trim(), 'utf-8'),
         Buffer.from([0x1A, 0x0C]), // Sesuai dengan capture.txt
